@@ -36,6 +36,7 @@ Output Structure:
         └── ...
 
 Usage:
+    python odoo_ticket_fetcher.py --ids 12345 67890
     python odoo_ticket_fetcher.py --tags "Bug" "Urgent"
     python odoo_ticket_fetcher.py --project "Support" --include-archived
     python odoo_ticket_fetcher.py --all --limit 50
@@ -490,6 +491,7 @@ class TaskExporter:
     
     def fetch_tasks(
         self,
+        task_ids: Optional[list[int]] = None,
         tag_ids_and: Optional[list[int]] = None,
         tag_ids_or: Optional[list[int]] = None,
         project_id: Optional[int] = None,
@@ -502,29 +504,34 @@ class TaskExporter:
         """
         domain = []
         context = {}
-        
-        if tag_ids_and:
-            for tag_id in tag_ids_and:
-                domain.append(["tag_ids", "in", [tag_id]])
-        
-        if tag_ids_or:
-            domain.append(["tag_ids", "in", tag_ids_or])
-        
-        if project_id:
-            domain.append(["project_id", "=", project_id])
-        
-        if archived_only:
-            domain.append(["active", "=", False])
+
+        if task_ids:
+            domain = [["id", "in", task_ids]]
             context["active_test"] = False
-        elif include_archived:
-            context["active_test"] = False
-        
+            limit = None
+        else:
+            if tag_ids_and:
+                for tag_id in tag_ids_and:
+                    domain.append(["tag_ids", "in", [tag_id]])
+
+            if tag_ids_or:
+                domain.append(["tag_ids", "in", tag_ids_or])
+
+            if project_id:
+                domain.append(["project_id", "=", project_id])
+
+            if archived_only:
+                domain.append(["active", "=", False])
+                context["active_test"] = False
+            elif include_archived:
+                context["active_test"] = False
+
         fields = [
             "id", "name", "active", "description", "tag_ids",
             "project_id", "stage_id", "user_ids", "date_deadline",
             "priority", "create_date", "write_date",
         ]
-        
+
         tasks = self.client.search_read(
             MODEL_TASK,
             domain,
@@ -832,6 +839,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    %(prog)s --ids 12345 67890                        # Fetch by ID
     %(prog)s --tags "Bug" "qweb"                      # AND: must have both
     %(prog)s --tags-any "Bug" "Feature"               # OR: must have any
     %(prog)s --tags "qweb" --tags-any "bug" "Bug"     # Combined
@@ -872,7 +880,9 @@ Config file (~/.config/odoo_tickets.toml):
                       help="Only archived tasks")
     filt.add_argument("-l", "--limit", type=int, metavar="N",
                       help="Max tasks to fetch")
-    
+    filt.add_argument("--ids", nargs="+", type=int, metavar="ID",
+                      help="Fetch specific task IDs (overrides other filters)")
+
     out = parser.add_argument_group("output")
     out.add_argument("-o", "--output", default="./odoo_tickets", metavar="DIR",
                      help="Output directory")
@@ -912,8 +922,8 @@ def main() -> int:
     
     setup_logging(args.verbose, args.quiet)
     
-    if not any([args.tags, args.tags_any, args.fetch_all, args.archived_only, args.project]):
-        parser.error("Specify --tags, --tags-any, --project, --all, or --archived-only")
+    if not any([args.ids, args.tags, args.tags_any, args.fetch_all, args.archived_only, args.project]):
+        parser.error("Specify --ids, --tags, --tags-any, --project, --all, or --archived-only")
     
     config = load_config(args.profile)
     
@@ -944,33 +954,39 @@ def main() -> int:
         client.authenticate()
         
         exporter = TaskExporter(client)
-        
+
         tag_ids_and = []
         tag_ids_or = []
-        
-        if args.tags:
-            tag_ids_and = exporter.resolve_tag_ids(args.tags)
-            if not tag_ids_and:
-                log.error("No matching tags for --tags. Exiting.")
-                return 1
-            log.info("  AND filter: must have ALL")
-        
-        if args.tags_any:
-            tag_ids_or = exporter.resolve_tag_ids(args.tags_any)
-            if not tag_ids_or:
-                log.error("No matching tags for --tags-any. Exiting.")
-                return 1
-            log.info("  OR filter: must have ANY")
-        
         project_id = None
-        if args.project:
-            project_id = exporter.resolve_project_id(args.project)
-            if not project_id:
-                log.error("Could not resolve project. Exiting.")
-                return 1
-        
+
+        if args.ids:
+            log.info("Fetching tasks by ID: %s", args.ids)
+            if args.tags or args.tags_any or args.project:
+                log.warning("--ids overrides --tags, --tags-any, and --project")
+        else:
+            if args.tags:
+                tag_ids_and = exporter.resolve_tag_ids(args.tags)
+                if not tag_ids_and:
+                    log.error("No matching tags for --tags. Exiting.")
+                    return 1
+                log.info("  AND filter: must have ALL")
+
+            if args.tags_any:
+                tag_ids_or = exporter.resolve_tag_ids(args.tags_any)
+                if not tag_ids_or:
+                    log.error("No matching tags for --tags-any. Exiting.")
+                    return 1
+                log.info("  OR filter: must have ANY")
+
+            if args.project:
+                project_id = exporter.resolve_project_id(args.project)
+                if not project_id:
+                    log.error("Could not resolve project. Exiting.")
+                    return 1
+
         log.info("Fetching tasks...")
         tasks = exporter.fetch_tasks(
+            task_ids=args.ids,
             tag_ids_and=tag_ids_and or None,
             tag_ids_or=tag_ids_or or None,
             project_id=project_id,

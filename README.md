@@ -5,7 +5,7 @@ Read-only tool for exporting Odoo project tasks to local Markdown files.
 ## Features
 
 - Exports tasks with metadata, descriptions, and attachments
-- Filters by tags (AND/OR logic), project, or archived status
+- Fetch by task ID, tags (AND/OR logic), project, or archived status
 - Converts HTML descriptions to Markdown
 - Extracts embedded base64 images from descriptions
 - Downloads task attachments via RPC
@@ -28,6 +28,9 @@ cd odoo-ticket-fetcher
 ## Usage
 
 ```bash
+# Fetch specific tasks by ID
+python odoo_ticket_fetcher.py --ids 12345 67890
+
 # Filter by tags (AND - must have both)
 python odoo_ticket_fetcher.py --tags "Bug" "qweb"
 
